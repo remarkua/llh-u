@@ -29,7 +29,9 @@
     Для удобства, вы можете скачать все необходимые файлы напрямую из репозитория в вашу текущую директорию:
 
     ```bash
-    wget [https://raw.githubusercontent.com/remarkua/llh-u/main/llh-u.sh](https://raw.githubusercontent.com/remarkua/llh-u/main/llh-u.sh) \ [https://raw.githubusercontent.com/remarkua/llh-u/main/llh-u-packages.sh](https://raw.githubusercontent.com/remarkua/llh-u/main/llh-u-packages.sh) \ [https://raw.githubusercontent.com/remarkua/llh-u/main/llh-u-test-01.sh](https://raw.githubusercontent.com/remarkua/llh-u/main/llh-u-test-01.sh)
+    wget (https://raw.githubusercontent.com/remarkua/llh-u/main/llh-u.sh) \
+    (https://raw.githubusercontent.com/remarkua/llh-u/main/llh-u-packages.sh) \
+    (https://raw.githubusercontent.com/remarkua/llh-u/main/llh-u-test-01.sh)
     ```
 
     ```bash
