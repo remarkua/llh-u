@@ -1,7 +1,7 @@
 #!/bin/bash
 # llh-u.sh
 # [ГЛАВНЫЙ СКРИПТ]: Универсальный скрипт администрирования
-# [ВЕРСИЯ]: 0.0.3
+# [ВЕРСИЯ]: 0.0.4
 # [АВТОР]: Yury aka remark
 # [ДАТА СОЗДАНИЯ]: 26 июня 2025 г.
 # [ОПИСАНИЕ]:
@@ -28,7 +28,7 @@ LOGS_ROOT_DIR="/opt/userscript/${SCRIPT_NAME}_logs/"
 # URL для проверки и загрузки обновлений скрипта
 REMOTE_UPDATE_URL="https://raw.githubusercontent.com/remarkua/llh-u/main/llh-u.sh" # Актуальный URL репозитория
 # Версия основного скрипта (для использования в логах, документации)
-SCRIPT_VERSION="0.0.3" # Обновленная версия
+SCRIPT_VERSION="0.0.4" # Обновленная версия
 
 # Маппинг уровней логирования в числовые значения (для сравнения)
 declare -gA LOG_LEVEL_NUMERIC=(
@@ -46,13 +46,6 @@ LANG="en"
 
 # Глобальный ассоциативный массив для регистрации модулей (для будущего использования)
 declare -gA REGISTERED_MODULES
-
-# --- ГАРАНТИЯ СУЩЕСТВОВАНИЯ ДИРЕКТОРИИ ЛОГОВ ДЛЯ РАННЕГО ЛОГИРОВАНИЯ ---
-# Создаем директорию логов и устанавливаем права максимально рано,
-# чтобы любые вызовы log_main/log_module не приводили к ошибке "No such file or directory".
-mkdir -p "$LOGS_ROOT_DIR" 2>/dev/null || { echo "CRITICAL ERROR: Could not create log directory $LOGS_ROOT_DIR" >&2; exit 1; }
-chmod 0750 "$LOGS_ROOT_DIR" 2>/dev/null || { echo "CRITICAL ERROR: Could not set permissions for log directory $LOGS_ROOT_DIR" >&2; exit 1; }
-
 
 # --- 3. Объявление языковых массивов ---
 # Эти массивы содержат строки интерфейса для разных языков.
@@ -112,6 +105,7 @@ declare -A TEXT_EN=(
   ["module_not_loaded"]="Module not loaded or not registered: "
   ["not_implemented_yet"]="This feature is not yet implemented: " # Added space at the end
   ["bootstrapping_start_message"]="Starting initial setup. Copying script files..."
+  ["log_dir_creation_failed_early"]="Failed to create log directory early. Ensure user has write access or run with sudo for initial setup."
 )
 
 declare -A TEXT_RU=(
@@ -169,7 +163,11 @@ declare -A TEXT_RU=(
   ["module_not_loaded"]="Модуль не загружен или не зарегистрирован: "
   ["not_implemented_yet"]="Эта функция еще не реализована: " # Added space at the end
   ["bootstrapping_start_message"]="Начальная настройка. Копирование файлов скрипта..."
+  ["log_dir_creation_failed_early"]="Не удалось создать каталог логов на раннем этапе. Убедитесь, что у пользователя есть права на запись или запустите с sudo для начальной настройки."
 )
+
+declare -A TEXT_ES=() # Объявляем пустой массив для испанского языка для предотвращения "unbound variable"
+
 
 # --- 4. Объявление вспомогательных функций ---
 
@@ -267,14 +265,28 @@ get_text() {
   fi
   
   # Используем косвенное расширение для доступа к массиву по имени переменной
+  # Сначала проверяем, существует ли переменная-массив по имени
+  if ! declare -p "$lang_array_name" &>/dev/null; then
+      # Если массив для выбранного языка не существует (например, TEXT_ES),
+      # но есть английский массив, используем его как запасной
+      if [[ -n "$module_prefix" ]] && declare -p "${module_prefix^^}_TEXT_EN" &>/dev/null; then
+          lang_array_name="${module_prefix^^}_TEXT_EN"
+      elif [[ -z "$module_prefix" ]] && declare -p "TEXT_EN" &>/dev/null; then
+          lang_array_name="TEXT_EN"
+      else
+          echo "TEXT_NOT_FOUND: $key" # Если даже английский массив не найден
+          return
+      fi
+  fi
+
   declare -n current_text_array="$lang_array_name"
   
   if [[ -v current_text_array["$key"] ]]; then
     echo "${current_text_array["$key"]}"
-  elif [[ -v TEXT_EN["$key"] ]]; then # Fallback на английский из основного скрипта
+  elif [[ -v TEXT_EN["$key"] ]]; then # Fallback to English from main if specific module/lang not found
     echo "${TEXT_EN["$key"]}"
   else
-    echo "TEXT_NOT_FOUND: $key" # Если текст не найден даже на английском
+    echo "TEXT_NOT_FOUND: $key"
   fi
 }
 
@@ -336,8 +348,7 @@ rotate_logs() {
 # init_logging
 # Инициализирует систему логирования, включая выбор уровня логирования.
 init_logging() {
-  # chown $USER:sudo "$LOGS_ROOT_DIR" # TODO: Consider if chown is needed here, or handled by system setup.
-  # The permissions are set above.
+  # chown $USER:sudo "$LOGS_ROOT_DIR" # This should be handled by the bootstrapping chmod/chown
   local configured_log_level=""
 
   # Чтение уровня логирования из settings.ini
@@ -416,7 +427,9 @@ initialize_language() {
     log_main "INFO" "Language set to: $LANG (initial setup)."
   fi
   
-  if [[ "$LANG" != "en" ]] && ! declare -p "TEXT_$LANG" &>/dev/null; then
+  # Этот блок перемещен после if/else, чтобы LANG был гарантированно установлен
+  # до проверки наличия массива.
+  if [[ "$LANG" != "en" ]] && ! declare -p "TEXT_${LANG^^}" &>/dev/null; then # Используем ${LANG^^} для UPPERCASE
     log_main "WARNING" "Unsupported language '$LANG' detected. Falling back to English."
     whiptail --msgbox "$(get_text "unsupported_lang_warning")" 10 60
     LANG="en"
@@ -445,6 +458,7 @@ check_dependencies() {
   local REQUIRED_PACKAGES=(
     "whiptail" "sudo" "curl" "grep" "sed" "awk" 
     "apt" "systemd" "iproute2" "net-tools"
+    # "crudini" # Crudini будет добавлен позже, пока используем нативные функции
   )
   local missing=()
   for dep in "${REQUIRED_PACKAGES[@]}"; do
@@ -454,7 +468,7 @@ check_dependencies() {
   if [[ ${#missing[@]} -gt 0 ]]; then
     local message="$(get_text "missing_deps_message")\n$(printf "%s\n" "${missing[@]}")\n\n$(get_text "install_deps_prompt")"
     if whiptail --yesno "$message" 15 60; then
-      log_main "INFO" "$(get_text "running_apt_update")"
+      log_main "INFO" "$(get_text "running_apt_update")" # Needs to be defined if used here
       if ! sudo apt update; then
         whiptail --msgbox "$(get_text "apt_update_error")\n$(get_text "check_network_or_repos")" 10 60
         log_main "ERROR" "$(get_text "failed_to_run_apt_update")"
@@ -637,66 +651,76 @@ CURRENT_SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
 # Это означает, что скрипт должен быть сначала загружен на диск, а затем запущен.
 # Запуск через `bash -c "$(wget -qO- ...)"` не поддерживается для первого запуска/бутреппинга.
 if [[ "$CURRENT_SCRIPT_DIR" != "$WORK_DIR" ]]; then
-  log_main "INFO" "Script is running from outside WORK_DIR. Initiating bootstrapping process."
-  whiptail --msgbox "$(get_text "bootstrapping_start_message")" 10 60
+  # Поскольку этот блок выполняется до init_logging, используем echo для критических ошибок
+  echo "$(get_text "bootstrapping_start_message")" >&2
 
-  if [[ ! -d "$WORK_DIR" ]]; then
-    log_main "INFO" "Creating WORK_DIR: $WORK_DIR"
-    mkdir -p "$WORK_DIR" || { log_main "ERROR" "$(get_text "work_dir_access_error"): Failed to create $WORK_DIR"; whiptail --msgbox "$(get_text "work_dir_access_error"): $WORK_DIR (create)"; exit 1; }
-    chmod 0750 "$WORK_DIR" || { log_main "ERROR" "$(get_text "work_dir_access_error"): Failed to set permissions for $WORK_DIR"; whiptail --msgbox "$(get_text "work_dir_access_error"): $WORK_DIR (chmod)"; exit 1; }
+  # Создание WORK_DIR и LOGS_ROOT_DIR с sudo, если необходимо
+  if ! sudo mkdir -p "$WORK_DIR" || ! sudo chmod 0750 "$WORK_DIR"; then
+    echo "CRITICAL ERROR: $(get_text "work_dir_access_error"): Failed to create or set permissions for $WORK_DIR" >&2
+    whiptail --msgbox "$(get_text "work_dir_access_error"): $WORK_DIR (create/chmod)" 10 60
+    exit 1
+  fi
+  if ! sudo mkdir -p "$LOGS_ROOT_DIR" || ! sudo chmod 0750 "$LOGS_ROOT_DIR"; then
+    echo "CRITICAL ERROR: $(get_text "work_dir_access_error"): Failed to create or set permissions for $LOGS_ROOT_DIR" >&2
+    whiptail --msgbox "$(get_text "work_dir_access_error"): $LOGS_ROOT_DIR (create/chmod)" 10 60
+    exit 1
   fi
 
   # Копирование основного скрипта
   # Убеждаемся, что $0 указывает на реальный файл, а не на интерпретатор
   if [[ ! -f "$0" ]]; then
-    log_main "ERROR" "Cannot copy script: \$0 does not point to a file. Ensure script is downloaded locally first."
+    echo "CRITICAL ERROR: Cannot copy script: \$0 does not point to a file. Ensure script is downloaded locally first." >&2
     whiptail --msgbox "Error: Initial script must be downloaded and run locally (e.g., ./llh-u.sh), not piped (e.g., bash -c \"\$(wget ...)\")." 15 70
     exit 1
   fi
 
-  log_main "INFO" "Copying main script from '$0' to '${WORK_DIR}${SCRIPT_NAME}.sh'"
-  if ! cp "$0" "${WORK_DIR}${SCRIPT_NAME}.sh"; then
+  echo "INFO: Copying main script from '$0' to '${WORK_DIR}${SCRIPT_NAME}.sh'" >&2
+  if ! sudo cp "$0" "${WORK_DIR}${SCRIPT_NAME}.sh"; then
+    echo "CRITICAL ERROR: $(get_text "copy_error"): $0 -> ${WORK_DIR}${SCRIPT_NAME}.sh" >&2
     whiptail --msgbox "$(get_text "copy_error"): $0 -> ${WORK_DIR}${SCRIPT_NAME}.sh" 10 60
-    log_main "ERROR" "$(get_text "copy_error"): $0 -> ${WORK_DIR}${SCRIPT_NAME}.sh"
     exit 1
   fi
   
   # Копирование всех файлов модулей (llh-u-*.sh) из исходной директории
   # Предполагается, что модули находятся в той же директории, откуда был запущен скрипт
-  log_main "INFO" "Searching for and copying module files (llh-u-*.sh) from '$CURRENT_SCRIPT_DIR' to '$WORK_DIR'."
+  echo "INFO: Searching for and copying module files (llh-u-*.sh) from '$CURRENT_SCRIPT_DIR' to '$WORK_DIR'." >&2
   find "$CURRENT_SCRIPT_DIR" -maxdepth 1 -name "llh-u-*.sh" -print0 | while IFS= read -r -d $'\0' file; do
-    log_main "DEBUG" "Found module file: $file"
-    if ! cp "$file" "${WORK_DIR}"; then
+    echo "DEBUG: Found module file: $file" >&2
+    if ! sudo cp "$file" "${WORK_DIR}"; then
+      echo "CRITICAL ERROR: $(get_text "copy_error"): $file -> ${WORK_DIR}" >&2
       whiptail --msgbox "$(get_text "copy_error"): $file -> ${WORK_DIR}" 10 60
-      log_main "ERROR" "$(get_text "copy_error"): $file -> ${WORK_DIR}"
       exit 1
     fi
   done
-  log_main "INFO" "Module copying complete."
+  echo "INFO: Module copying complete." >&2
 
+  if ! sudo mkdir -p "${WORK_DIR}/tmp" || ! sudo chmod 0750 "${WORK_DIR}/tmp"; then
+    echo "CRITICAL ERROR: $(get_text "work_dir_access_error"): Failed to create or set permissions for ${WORK_DIR}/tmp" >&2
+    whiptail --msgbox "$(get_text "work_dir_access_error"): ${WORK_DIR}/tmp (create/chmod)" 10 60
+    exit 1
+  fi
 
-  mkdir -p "${WORK_DIR}/tmp" || { log_main "ERROR" "$(get_text "work_dir_access_error"): Failed to create ${WORK_DIR}/tmp"; whiptail --msgbox "$(get_text "work_dir_access_error"): ${WORK_DIR}/tmp (create)"; exit 1; }
-  chmod 0750 "${WORK_DIR}/tmp" || { log_main "ERROR" "$(get_text "work_dir_access_error"): Failed to set permissions for ${WORK_DIR}/tmp"; whiptail --msgbox "$(get_text "work_dir_access_error"): ${WORK_DIR}/tmp (chmod)"; exit 1; }
-
-
-  log_main "INFO" "$(get_text "bootstrapping_restart")"
+  echo "$(get_text "bootstrapping_restart")" >&2
+  # Запускаем обновленный скрипт с оригинальными аргументами
   exec "${WORK_DIR}${SCRIPT_NAME}.sh" "${ORIGINAL_ARGS[@]}"
 fi
 
 # Если скрипт уже запущен из WORK_DIR, просто переходим в нее (или остаемся в ней)
 if ! cd "$WORK_DIR"; then
   whiptail --msgbox "$(get_text "work_dir_access_error"): $WORK_DIR (cd)" 10 60
-  log_main "ERROR" "$(get_text "work_dir_access_error"): $WORK_DIR (cd)"
+  echo "CRITICAL ERROR: $(get_text "work_dir_access_error"): $WORK_DIR (cd)" >&2
   exit 1
 fi
 
 # Убедимся, что права на WORK_DIR, LOGS_ROOT_DIR и tmp/ корректны при каждом запуске
-chmod 0750 "$WORK_DIR" || log_main "WARNING" "Failed to set permissions for $WORK_DIR during regular run."
-chmod 0750 "$LOGS_ROOT_DIR" || log_main "WARNING" "Failed to set permissions for $LOGS_ROOT_DIR during regular run."
-chmod 0750 "${WORK_DIR}/tmp" || log_main "WARNING" "Failed to set permissions for ${WORK_DIR}/tmp during regular run."
+# Эти операции не требуют sudo, так как они будут выполняться от пользователя с UID=1000
+# после того, как директории были созданы с правильными правами во время бутреппинга.
+chmod 0750 "$WORK_DIR" || echo "WARNING: Failed to set permissions for $WORK_DIR during regular run." >&2
+chmod 0750 "$LOGS_ROOT_DIR" || echo "WARNING: Failed to set permissions for $LOGS_ROOT_DIR during regular run." >&2
+chmod 0750 "${WORK_DIR}/tmp" || echo "WARNING: Failed to set permissions for ${WORK_DIR}/tmp during regular run." >&2
 
 
-# --- 6. Инициализация логирования (должна быть до initialize_language) ---
+# --- 6. Инициализация логирования ---
 init_logging
 
 # --- 7. Инициализация языка (первое интерактивное окно) ---
@@ -743,7 +767,8 @@ log_main "INFO" "Loading modules..."
 # Подключение модуля llh-u-packages.sh
 # Сохраняем текущее состояние опций для восстановления
 declare -g _SAVED_FLAGS="$-" # Глобальная переменная для сохранения флагов
-set -e -u # Включаем строгие режимы для загрузки модуля
+# Включаем строгие режимы для загрузки модуля, если они были отключены (set -e -u в начале скрипта)
+set -e -u 
 
 if ! source "llh-u-packages.sh"; then # Изменено название модуля
   handle_error "MODULE_LOAD_ERROR" "$(get_text "module_load_error"): llh-u-packages.sh"
@@ -751,8 +776,9 @@ if ! source "llh-u-packages.sh"; then # Изменено название мод
 fi
 
 # Восстанавливаем предыдущее состояние опций
-[[ $_SAVED_FLAGS == *e* ]] || set +e
-[[ $_SAVED_FLAGS == *u* ]] || set +u
+# Эти команды должны быть закомментированы, так как set -e -u уже в начале скрипта
+# [[ $_SAVED_FLAGS == *e* ]] || set +e
+# [[ $_SAVED_FLAGS == *u* ]] || set +u
 log_main "INFO" "Module 'packages' loaded successfully."
 
 # TODO: Добавить загрузку других модулей здесь по аналогии

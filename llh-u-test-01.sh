@@ -8,7 +8,7 @@
 #   - Имитирует возвращение в главное меню модуля.
 
 # --- Глобальные переменные и функции-заглушки для тестирования ---
-# Эти функции нужны, чтобы скрипт мог работать автономно для тестирования UI
+# Эти functions нужны, чтобы скрипт мог работать автономно для тестирования UI
 # В реальной системе они будут предоставлены основным скриптом llh-u.sh
 
 # Заглушка для LOGS_ROOT_DIR (для автономной работы)
@@ -67,12 +67,25 @@ get_text() {
   local lang_array_name="TEST_TEXT_${LANG^^}" # Используем TEST_TEXT_RU/EN
   declare -n current_text_array="$lang_array_name" # Динамическая ссылка на массив
   
+  if ! declare -p "$lang_array_name" &>/dev/null; then
+      if [[ -n "$module_prefix" ]] && declare -p "${module_prefix^^}_TEXT_EN" &>/dev/null; then
+          lang_array_name="${module_prefix^^}_TEXT_EN"
+      elif [[ -z "$module_prefix" ]] && declare -p "TEST_TEXT_EN" &>/dev/null; then # Changed to TEST_TEXT_EN
+          lang_array_name="TEST_TEXT_EN"
+      else
+          echo "TEXT_NOT_FOUND: $key"
+          return
+      fi
+  fi
+
+  declare -n current_text_array="$lang_array_name"
+  
   if [[ -v current_text_array["$key"] ]]; then
     echo "${current_text_array["$key"]}"
   elif [[ -v TEST_TEXT_EN["$key"] ]]; then # Fallback на английский
     echo "${TEST_TEXT_EN["$key"]}"
   else
-    echo "TEXT_NOT_FOUND: $key" # Если текст не найден даже на английском
+    echo "TEXT_NOT_FOUND: $key"
   fi
 }
 

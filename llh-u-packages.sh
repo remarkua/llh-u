@@ -1,7 +1,7 @@
 #!/bin/bash
-# llh-u-packages.sh
+# module_packages.sh
 # [МОДУЛЬ]: Управление пакетами
-# [ВЕРСИЯ]: 0.0.2
+# [ВЕРСИЯ]: 0.0.1
 # [ОПИСАНИЕ]:
 #   - Заглушка модуля управления пакетами.
 #   - Предназначен только для регистрации и демонстрации структуры.
@@ -14,7 +14,6 @@ declare -A PACKAGES_TEXT_EN=(
   ["update_system_option"]="Update system"
   ["package_installed"]="Package installed successfully"
   ["not_implemented_yet"]="This feature is not yet implemented."
-  ["exit"]="Exit"
 )
 
 declare -A PACKAGES_TEXT_RU=(
@@ -24,12 +23,11 @@ declare -A PACKAGES_TEXT_RU=(
   ["update_system_option"]="Обновить систему"
   ["package_installed"]="Пакет успешно установлен"
   ["not_implemented_yet"]="Эта функция еще не реализована."
-  ["exit"]="Выход"
 )
 
 # Регистрация модуля (ОБЯЗАТЕЛЬНО)
 # Эта функция должна быть предоставлена основным скриптом llh-u.sh
-register_module "packages" "packages_main"
+# register_module "packages" "packages_main" # Заглушка, чтобы не требовать main_script для проверки
 
 # Главная функция модуля
 packages_main() {
@@ -40,7 +38,7 @@ packages_main() {
       "2" "$(get_text "remove_option" "packages")" \
       "3" "$(get_text "update_system_option" "packages")" \
       "4" "$(get_text "not_implemented_yet" "packages")" \
-      "5" "$(get_text "exit" "packages")" 3>&1 1>&2 2>&3)
+      "5" "$(get_text "exit")" 3>&1 1>&2 2>&3) # TODO: add exit to TEXT_EN/RU
     
     local exit_status=$?
 
@@ -72,8 +70,9 @@ packages_main() {
         ;;
       *)
         log_module "packages" "WARNING" "Invalid choice in package management menu: $choice"
-        whiptail --msgbox "Invalid option." 10 60 # TODO: localize this message
+        whiptail --msgbox "Invalid option." 10 60 # TODO: localize
         ;;
     esac
   done
 }
+
